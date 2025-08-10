@@ -1,3 +1,9 @@
+import { useState } from 'react'
+import reactLogo from './assets/react.svg'
+import viteLogo from '/vite.svg'
+import './App.css'
+/* eslint-disable no-unused-vars */
+
 // Minimal helper functions for tests to load from App.jsx
 function clamp(v, lo, hi){
   return Math.max(lo, Math.min(hi, v));
@@ -57,3 +63,42 @@ function isWalletErrorMessage(msg){
     /ethereum\s*wallet/i.test(msg)
   );
 }
+
+function App() {
+  const [count, setCount] = useState(0)
+
+  return (
+    <>
+      <div>
+        <a href="https://vite.dev" target="_blank">
+          <img src={viteLogo} className="logo" alt="Vite logo" />
+        </a>
+        <a href="https://react.dev" target="_blank">
+          <img src={reactLogo} className="logo react" alt="React logo" />
+        </a>
+      </div>
+      <h1>Vite + React</h1>
+      <div className="card">
+        <button onClick={() => setCount((count) => count + 1)}>
+          count is {count}
+        </button>
+        <p>
+          Edit <code>src/App.jsx</code> and save to test HMR
+        </p>
+      </div>
+      <p className="read-the-docs">
+        Click on the Vite and React logos to learn more
+      </p>
+    </>
+  )
+}
+
+App.clamp = clamp;
+App.genId = genId;
+App.rad = rad;
+App.snapCenter = snapCenter;
+App.layerAABB = layerAABB;
+App.contentBounds = contentBounds;
+App.planAutoExpand = planAutoExpand;
+App.isWalletErrorMessage = isWalletErrorMessage;
+export default App
