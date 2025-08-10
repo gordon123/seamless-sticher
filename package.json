@@ -4,7 +4,7 @@
   "description": "Seamless Stitcher - test harness",
   "main": "index.js",
   "scripts": {
-    "start": "node tests/self-test.js",
+    "start": "node dev.js",
     "dev": "node dev.js"
   },
   "keywords": [],
