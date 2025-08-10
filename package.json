@@ -5,10 +5,12 @@
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
+
     "start": "node tests/self-test.js",
     "dev": "node dev.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC"
+
 }

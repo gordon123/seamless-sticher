@@ -89,7 +89,9 @@ function planAutoExpand(layers, cw, ch, margin){
 }
 
 /********************* App ************************/
+
 function App(){
+
   const canvasRef=useRef(null);
   const [cw,setCw]=useState(1440); const [ch,setCh]=useState(1024);
   const [lockAspect,setLockAspect]=useState(false); const aspectRef=useRef(cw/ch);
@@ -134,6 +136,7 @@ function App(){
 
   // Dragging layers on canvas
   const drag=useRef({id:null,dx:0,dy:0,last:null,axis:null});
+
   const onPointerDown=(e)=>{
     const r=e.currentTarget.getBoundingClientRect();
     const scaleX=cw/r.width, scaleY=ch/r.height;
@@ -181,6 +184,7 @@ function App(){
     }));
     setCenterSnap({x:sx,y:sy});
   };
+
   const onPointerUp=()=>{ drag.current={id:null,dx:0,dy:0,last:null,axis:null}; setCenterSnap({x:false,y:false}); };
 
   // Keyboard shortcuts
@@ -378,4 +382,3 @@ function App(){
 
 const root = document.getElementById("root");
 ReactDOM.createRoot(root).render(<App />);
-
