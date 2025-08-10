@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+const { useEffect, useRef, useState } = React;
 
 // Seamless Stitcher — Auto Expand Canvas (no wallets, sandbox‑safe)
 // HARDENED: Prevents MetaMask noise; adds automatic infinite‑feeling canvas growth.
@@ -47,10 +47,15 @@ function isWalletErrorMessage(msg){ if(!msg) return false; const s=String(msg).t
 /********************* Utilities ************************/
 const MIN_CANVAS = 256; // practical lower bound
 const MAX_CANVAS = 16384; // safety upper bound to avoid browser crashes
+const CENTER_SNAP_DIST = 10; // px distance to snap toward canvas center
 
 function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
 function genId(){ return `l_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,8)}`; }
 function rad(d){ return (d*Math.PI)/180; }
+
+function snapCenter(v, center, dist=CENTER_SNAP_DIST){
+  return Math.abs(v-center)<=dist ? {v:center,snap:true} : {v,snap:false};
+}
 
 function rgbToHsl(r,g,b){r/=255;g/=255;b/=255;const m=Math.max(r,g,b),n=Math.min(r,g,b);let h,s,l=(m+n)/2; if(m===n){h=0;s=0;}else{const d=m-n; s=l>0.5?d/(2-m-n):d/(m+n); switch(m){case r:h=(g-b)/d+(g<b?6:0);break;case g:h=(b-r)/d+2;break;default:h=(r-g)/d+4;} h/=6;} return [h,s,l];}
 function hslToRgb(h,s,l){let r,g,b; if(s===0){r=g=b=l;} else {const hue2rgb=(p,q,t)=>{if(t<0)t+=1;if(t>1)t-=1;if(t<1/6)return p+(q-p)*6*t;if(t<1/2)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p;}; const q=l<0.5?l*(1+s):l+s-l*s; const p=2*l-q; r=hue2rgb(p,q,h+1/3); g=hue2rgb(p,q,h); b=hue2rgb(p,q,h-1/3);} return [Math.round(r*255),Math.round(g*255),Math.round(b*255)];}
@@ -96,13 +101,11 @@ export default function App(){
   const [snap,setSnap]=useState(true);
   const [testOutput,setTestOutput]=useState("");
   const [overlapPx,setOverlapPx]=useState(60);
+  const [centerSnap,setCenterSnap]=useState({x:false,y:false});
 
   // NEW: Auto Expand controls
   const [autoExpand,setAutoExpand]=useState(true);
   const [expandMargin,setExpandMargin]=useState(64);
-
-  // NEVER touch window.ethereum
-  useEffect(()=>{},[]);
 
   // Load files
   const onFiles=(files)=>{ const arr=Array.from(files||[]);
@@ -115,8 +118,15 @@ export default function App(){
   useEffect(()=>{ const canvas=canvasRef.current; if(!canvas) return; const ctx=canvas.getContext("2d");
     ctx.clearRect(0,0,cw,ch); const bg=ctx.createLinearGradient(0,0,0,ch); bg.addColorStop(0,bgTop); bg.addColorStop(1,bgBottom); ctx.fillStyle=bg; ctx.fillRect(0,0,cw,ch);
     layers.forEach((L)=>{ if(!L.img?.complete) return; ctx.save(); ctx.globalAlpha=L.opacity; const sw=Math.max(1,Math.round((L.img.width||1)*L.scale)); const sh=Math.max(1,Math.round((L.img.height||1)*L.scale)); const tmp=document.createElement("canvas"); tmp.width=sw; tmp.height=sh; const tctx=tmp.getContext("2d"); tctx.filter=`brightness(${L.bright}) contrast(${L.contrast}) saturate(${L.saturate}) hue-rotate(${L.hueRot}deg)`; tctx.translate(L.flipX?sw:0,0); if(L.flipX) tctx.scale(-1,1); tctx.drawImage(L.img,0,0,sw,sh); const soft=featheredCanvasFrom(tmp,sw,sh,Math.max(0,Math.min(400,Math.round(L.feather)))); ctx.translate(L.x,L.y); ctx.rotate(rad(L.rot)); ctx.drawImage(soft,-sw/2,-sh/2); ctx.restore(); if(showGuides && selected===L.id){ const b=layerAABB(L); ctx.save(); ctx.strokeStyle="rgba(255,255,255,0.8)"; ctx.setLineDash([6,6]); ctx.strokeRect(b.minX,b.minY,b.maxX-b.minX,b.maxY-b.minY); ctx.setLineDash([]); ctx.restore(); } });
-    if(showGuides){ ctx.save(); ctx.strokeStyle="rgba(255,255,255,0.25)"; ctx.beginPath(); ctx.moveTo(cw/2,0); ctx.lineTo(cw/2,ch); ctx.moveTo(0,ch/2); ctx.lineTo(cw,ch/2); ctx.stroke(); ctx.restore(); }
-  },[layers,selected,bgTop,bgBottom,showGuides,cw,ch]);
+    if(showGuides){
+      ctx.save();
+      ctx.strokeStyle=centerSnap.x?"rgba(255,255,255,0.8)":"rgba(255,255,255,0.25)";
+      ctx.beginPath(); ctx.moveTo(cw/2,0); ctx.lineTo(cw/2,ch); ctx.stroke();
+      ctx.strokeStyle=centerSnap.y?"rgba(255,255,255,0.8)":"rgba(255,255,255,0.25)";
+      ctx.beginPath(); ctx.moveTo(0,ch/2); ctx.lineTo(cw,ch/2); ctx.stroke();
+      ctx.restore();
+    }
+  },[layers,selected,bgTop,bgBottom,showGuides,cw,ch,centerSnap]);
 
   // Auto‑expand when content moves/changes
   useEffect(()=>{ if(!autoExpand || layers.length===0) return; const plan = planAutoExpand(layers, cw, ch, expandMargin); if(!plan.changed) return; setCw(plan.cw); setCh(plan.ch); if(plan.dx||plan.dy){ setLayers(old=>old.map(L=>({...L, x:L.x+plan.dx, y:L.y+plan.dy}))); }
@@ -125,8 +135,8 @@ export default function App(){
   // Dragging layers on canvas
   const drag=useRef({id:null,dx:0,dy:0,last:null,axis:null});
   const onPointerDown=(e)=>{ const r=e.currentTarget.getBoundingClientRect(); const x=e.clientX-r.left; const y=e.clientY-r.top; for(let i=layers.length-1;i>=0;i--){ const L=layers[i]; if(!L.img?.complete) continue; const b=layerAABB(L); if(x>=b.minX && x<=b.maxX && y>=b.minY && y<=b.maxY){ setSelected(L.id); const c=Math.cos(rad(L.rot)), s=Math.sin(rad(L.rot)); const dx=x-L.x, dy=y-L.y; const lx=c*dx+s*dy; const ly=-s*dx+c*dy; drag.current={id:L.id,dx:lx,dy:ly,last:{x,y},axis:null}; if(e.currentTarget.setPointerCapture) e.currentTarget.setPointerCapture(e.pointerId); break; } } };
-  const onPointerMove=(e)=>{ if(!drag.current.id) return; const r=e.currentTarget.getBoundingClientRect(); const x=e.clientX-r.left; const y=e.clientY-r.top; setLayers((old)=>old.map((L)=>{ if(L.id!==drag.current.id) return L; let nx=x-(drag.current.dx*Math.cos(rad(L.rot))-drag.current.dy*Math.sin(rad(L.rot))); let ny=y-(drag.current.dx*Math.sin(rad(L.rot))+drag.current.dy*Math.cos(rad(L.rot))); if(e.shiftKey){ const last=drag.current.last; const ax=Math.abs(x-last.x)>Math.abs(y-last.y)?"x":"y"; if(!drag.current.axis) drag.current.axis=ax; if(drag.current.axis==="x") ny=L.y; else nx=L.x; } else drag.current.axis=null; if(snap){ nx=Math.round(nx); ny=Math.round(ny);} drag.current.last={x,y}; return {...L,x:nx,y:ny}; })); };
-  const onPointerUp=()=>{ drag.current={id:null,dx:0,dy:0,last:null,axis:null}; };
+  const onPointerMove=(e)=>{ if(!drag.current.id) return; const r=e.currentTarget.getBoundingClientRect(); const x=e.clientX-r.left; const y=e.clientY-r.top; let sx=false, sy=false; setLayers((old)=>old.map((L)=>{ if(L.id!==drag.current.id) return L; let nx=x-(drag.current.dx*Math.cos(rad(L.rot))-drag.current.dy*Math.sin(rad(L.rot))); let ny=y-(drag.current.dx*Math.sin(rad(L.rot))+drag.current.dy*Math.cos(rad(L.rot))); if(e.shiftKey){ const last=drag.current.last; const ax=Math.abs(x-last.x)>Math.abs(y-last.y)?"x":"y"; if(!drag.current.axis) drag.current.axis=ax; if(drag.current.axis==="x") ny=L.y; else nx=L.x; } else drag.current.axis=null; const scx=snapCenter(nx,cw/2); const scy=snapCenter(ny,ch/2); nx=scx.v; ny=scy.v; sx=scx.snap; sy=scy.snap; if(snap){ nx=Math.round(nx); ny=Math.round(ny);} drag.current.last={x,y}; return {...L,x:nx,y:ny}; })); setCenterSnap({x:sx,y:sy}); };
+  const onPointerUp=()=>{ drag.current={id:null,dx:0,dy:0,last:null,axis:null}; setCenterSnap({x:false,y:false}); };
 
   // Keyboard shortcuts
   useEffect(()=>{ const onKey=(e)=>{ if(!selected) return; const step=e.shiftKey?10:1; setLayers((old)=>old.map((L)=>{ if(L.id!==selected) return L; if(e.key==="ArrowLeft") return {...L,x:L.x-step}; if(e.key==="ArrowRight") return {...L,x:L.x+step}; if(e.key==="ArrowUp") return {...L,y:L.y-step}; if(e.key==="ArrowDown") return {...L,y:L.y+step}; if(e.key==="[") return {...L,feather:Math.max(0,L.feather-5)}; if(e.key==="]") return {...L,feather:Math.min(400,L.feather+5)}; if(e.key==="+"||e.key==="=") return {...L,scale:L.scale*1.02}; if(e.key==="-") return {...L,scale:L.scale/1.02}; if(e.key.toLowerCase()==="r") return {...L,x:cw/2,y:ch/2,scale:1,rot:0}; return L; })); }; window.addEventListener("keydown",onKey); return ()=>window.removeEventListener("keydown",onKey); },[selected,cw,ch]);
@@ -172,6 +182,10 @@ export default function App(){
       // Top & bottom overflow -> height grows
       const Ls3=[fake(200,-20,100,300,0,1)]; const p3=planAutoExpand(Ls3,400,300,40); (p3.dy>0 && p3.ch>300)?ok("AutoExpand: vertical overflow grows height") : bad("AutoExpand: vertical overflow", JSON.stringify(p3));
     })();
+    // Snap-to-center threshold
+    (function(){ const near=snapCenter(100+CENTER_SNAP_DIST-1,100); const far=snapCenter(100+CENTER_SNAP_DIST+1,100); (near.snap && !far.snap)?ok("Center snap threshold"):bad("Center snap threshold",JSON.stringify({near,far})); })();
+    // No wallet access attempt
+    (function(){ let accessed=false; Object.defineProperty(window,'ethereum',{get(){accessed=true; return undefined;},configurable:true}); accessed?bad("Wallet access attempt"):ok("No wallet access attempt"); delete window.ethereum; })();
     // Wallet detector tests
     isWalletErrorMessage("s: Failed to connect to MetaMask")?ok("Wallet detector: connect"):bad("Wallet detector: connect");
     isWalletErrorMessage("ProviderError: MetaMask not available")?ok("Wallet detector: not available"):bad("Wallet detector: not available");
@@ -271,6 +285,7 @@ export default function App(){
 
             <div className="p-4 bg-neutral-900 rounded-2xl shadow">
               <button onClick={exportPNG} className="w-full px-4 py-3 bg-indigo-600 rounded-xl font-semibold">Export PNG</button>
+              {(cw>8192 || ch>8192) && <div className="text-amber-400 text-xs mt-2">Canvas &gt;8192px may fail in some browsers.</div>}
             </div>
 
             <div className="p-4 bg-neutral-900 rounded-2xl shadow text-xs text-neutral-300 space-y-2">
@@ -315,6 +330,11 @@ export default function App(){
     </ErrorBoundary>
   );
 }
+
+const root = document.getElementById("root");
+ReactDOM.createRoot(root).render(<App />);
+
+
 import React, { useEffect, useRef, useState } from "react";
 
 // Seamless Stitcher — Auto Expand Canvas (no wallets, sandbox‑safe)

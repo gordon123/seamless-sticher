@@ -3,16 +3,20 @@
   "version": "1.0.0",
   "description": "---- test chagpt codex ----",
   "main": "index.js",
+  "type": "commonjs",
   "scripts": {
+    "dev": "vite",
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node self-test.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "vite": "^7.1.1"
   }
 }
