@@ -1,0 +1,14 @@
+{
+  "name": "seamless-sticher",
+  "version": "1.0.0",
+  "description": "---- test chagpt codex ----",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node tests/self-test.js",
+    "dev": "node dev.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
