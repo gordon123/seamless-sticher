@@ -112,27 +112,57 @@ function planAutoExpand(layers, cw, ch, margin){
 /********************* App ************************/
 export default function App(){
   const canvasRef=useRef(null);
+const layersListRef = useRef(null);
+const stageRef=useRef(null); // wrapper that scrolls & scales the canvas
   const [cw,setCw]=useState(1440); const [ch,setCh]=useState(1024);
   const [lockAspect,setLockAspect]=useState(false); const aspectRef=useRef(cw/ch);
 
   const [layers,setLayers]=useState([]); // {id,name,img,x,y,scale,rot,opacity,feather,hueRot,bright,contrast,saturate,flipX}
   const [selected,setSelected]=useState(null);
-  const [bgTop,setBgTop]=useState("#0e0e10"); const [bgBottom,setBgBottom]=useState("#1a1a1e");
-  const [showGuides,setShowGuides]=useState(true);
-  const [snap,setSnap]=useState(true);
+  const [bgTop /*, setBgTop */]=useState("#0e0e10"); const [bgBottom /*, setBgBottom */]=useState("#1a1a1e");
+  const [showGuides /*, setShowGuides */]=useState(true);
+  const [snap /*, setSnap */]=useState(true);
   const [testOutput,setTestOutput]=useState("");
   const [overlapPx,setOverlapPx]=useState(60);
 
   // Auto Expand controls
   const [autoExpand,setAutoExpand]=useState(true);
   const [expandMargin,setExpandMargin]=useState(64);
+  const [viewScale,setViewScale]=useState(1); // 1 = 100%
 
-  // Load files
+  // Load files (read as data URLs so layers persist across refresh)
   const onFiles=(files)=>{ const arr=Array.from(files||[]);
-    arr.forEach((f,i)=>{ if(!f.type?.startsWith("image/")) return; const url=URL.createObjectURL(f); const img=new Image();
-      img.onload=()=>{ setLayers((old)=>([...old,{ id:genId(), name:f.name||`Layer ${old.length+1}`, img, x:cw/2+(i-arr.length/2)*40, y:ch/2+(i-arr.length/2)*20, scale:Math.min(1,(cw*0.6)/img.width), rot:0, opacity:1, feather:120, hueRot:0, bright:1, contrast:1, saturate:1, flipX:false }])); URL.revokeObjectURL(url); };
-      img.onerror=()=>{ console.warn("Failed to load image", f?.name); URL.revokeObjectURL(url); };
-      img.src=url; }); };
+    arr.forEach((f,i)=>{ if(!f.type?.startsWith("image/")) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const dataUrl = ev.target.result;
+        const img = new Image();
+        img.onload = () => {
+          setLayers((old)=>[
+            ...old,
+            {
+              id: genId(),
+              name: f.name || `Layer ${old.length+1}`,
+              img,
+              x: cw/2 + (i - arr.length/2) * 40,
+              y: ch/2 + (i - arr.length/2) * 20,
+              scale: Math.min(1, (cw*0.6)/img.width),
+              rot: 0,
+              opacity: 1,
+              feather: 120,
+              hueRot: 0,
+              bright: 1,
+              contrast: 1,
+              saturate: 1,
+              flipX: false
+            }
+          ]);
+        };
+        img.onerror = () => { console.warn("Failed to load image", f?.name); };
+        img.src = dataUrl;
+      };
+      reader.readAsDataURL(f);
+    }); };
 
   // Draw
   useEffect(()=>{ const canvas=canvasRef.current; if(!canvas) return; const ctx=canvas.getContext("2d");
@@ -146,11 +176,120 @@ export default function App(){
   useEffect(()=>{ if(!autoExpand || layers.length===0) return; const plan = planAutoExpand(layers, cw, ch, expandMargin); if(!plan.changed) return; setCw(plan.cw); setCh(plan.ch); if(plan.dx||plan.dy){ setLayers(old=>old.map(L=>({...L, x:L.x+plan.dx, y:L.y+plan.dy}))); }
   },[layers, cw, ch, autoExpand, expandMargin]);
 
-  // Dragging layers on canvas
+  // Dragging layers on canvas (pointer coords adjusted for CSS scale)
   const drag=useRef({id:null,dx:0,dy:0,last:null,axis:null});
-  const onPointerDown=(e)=>{ const r=e.currentTarget.getBoundingClientRect(); const x=e.clientX-r.left; const y=e.clientY-r.top; for(let i=layers.length-1;i>=0;i--){ const L=layers[i]; if(!L.img?.complete) continue; const sw=L.img.width*L.scale; const sh=L.img.height*L.scale; const c=Math.cos(rad(L.rot)); const s=Math.sin(rad(L.rot)); const dx=x-L.x, dy=y-L.y; const lx=c*dx+s*dy; const ly=-s*dx+c*dy; if(lx>-sw/2 && lx<sw/2 && ly>-sh/2 && ly<sh/2){ setSelected(L.id); drag.current={id:L.id,dx:lx,dy:ly,last:{x,y},axis:null}; if(e.currentTarget.setPointerCapture) e.currentTarget.setPointerCapture(e.pointerId); break; } } };
-  const onPointerMove=(e)=>{ if(!drag.current.id) return; const r=e.currentTarget.getBoundingClientRect(); const x=e.clientX-r.left; const y=e.clientY-r.top; setLayers((old)=>old.map((L)=>{ if(L.id!==drag.current.id) return L; let nx=x-(drag.current.dx*Math.cos(rad(L.rot))-drag.current.dy*Math.sin(rad(L.rot))); let ny=y-(drag.current.dx*Math.sin(rad(L.rot))+drag.current.dy*Math.cos(rad(L.rot))); if(e.shiftKey){ const last=drag.current.last; const ax=Math.abs(x-last.x)>Math.abs(y-last.y)?"x":"y"; if(!drag.current.axis) drag.current.axis=ax; if(drag.current.axis==="x") ny=L.y; else nx=L.x; } else drag.current.axis=null; if(snap){ nx=Math.round(nx); ny=Math.round(ny);} drag.current.last={x,y}; return {...L,x:nx,y:ny}; })); };
-  const onPointerUp=()=>{ drag.current={id:null,dx:0,dy:0,last:null,axis:null}; };
+  // store latest pointer move and rAF handle to throttle updates for smooth dragging
+  const moveRef = useRef({x:0,y:0});
+  const rafRef = useRef(null);
+  const onPointerDown=(e)=>{
+    // prevent page scrolling when dragging starts
+    e.preventDefault?.();
+
+    // use the canvas bounding rect to compute coordinates (more robust when handlers are on the container)
+    const _canvasRect = canvasRef.current?.getBoundingClientRect();
+    if(!_canvasRect) return;
+    const x = (e.clientX - _canvasRect.left) / (viewScale || 1);
+    const y = (e.clientY - _canvasRect.top) / (viewScale || 1);
+
+    for(let i=layers.length-1;i>=0;i--){
+      const L=layers[i];
+      if(!L.img?.complete) continue;
+      const sw=(L.img?.naturalWidth||L.img?.width||1)*L.scale;
+      const sh=(L.img?.naturalHeight||L.img?.height||1)*L.scale;
+      const c=Math.cos(rad(L.rot)); const s=Math.sin(rad(L.rot));
+      const dx=x-L.x, dy=y-L.y;
+      const lx=c*dx+s*dy; const ly=-s*dx+c*dy;
+
+      // debug log to help diagnose hit-testing
+      console.debug("[seamless] pointerDown", { x, y, layerId: L.id, lx, ly, sw, sh, rot: L.rot });
+
+      if(lx>-sw/2 && lx<sw/2 && ly>-sh/2 && ly<sh/2){
+        setSelected(L.id);
+        drag.current={id:L.id,dx:lx,dy:ly,last:{x,y},axis:null};
+        // capture pointer on the canvas (prefer canvas)
+        try { if (canvasRef.current?.setPointerCapture && e.pointerId) canvasRef.current.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+        break;
+      }
+    }
+  };
+  const onPointerMove = (e) => {
+    // prevent page scroll while dragging
+    e.preventDefault?.();
+
+    // store lightweight pointer info (avoid holding entire event object)
+    moveRef.current.x = e.clientX;
+    moveRef.current.y = e.clientY;
+    moveRef.current.shift = !!e.shiftKey;
+
+    if (!drag.current.id) return;
+
+    if (rafRef.current == null) {
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null;
+        const mx = moveRef.current.x;
+        const my = moveRef.current.y;
+        const shift = moveRef.current.shift;
+        const _canvasRect = canvasRef.current?.getBoundingClientRect();
+        if (!_canvasRect) return;
+        const x = (mx - _canvasRect.left) / (viewScale || 1);
+        const y = (my - _canvasRect.top) / (viewScale || 1);
+
+        // update selected layer position once per frame
+        setLayers((old) =>
+          old.map((L) => {
+            if (L.id !== drag.current.id) return L;
+            let nx = x - (drag.current.dx * Math.cos(rad(L.rot)) - drag.current.dy * Math.sin(rad(L.rot)));
+            let ny = y - (drag.current.dx * Math.sin(rad(L.rot)) + drag.current.dy * Math.cos(rad(L.rot)));
+            if (shift) {
+              const last = drag.current.last;
+              const ax = Math.abs(x - last.x) > Math.abs(y - last.y) ? "x" : "y";
+              if (!drag.current.axis) drag.current.axis = ax;
+              if (drag.current.axis === "x") ny = L.y;
+              else nx = L.x;
+            } else drag.current.axis = null;
+            if (snap) {
+              nx = Math.round(nx);
+              ny = Math.round(ny);
+            }
+            drag.current.last = { x, y };
+            return { ...L, x: nx, y: ny };
+          })
+        );
+      });
+    }
+  };
+  const onPointerUp=(e)=>{
+    // release pointer capture from the event target if we captured it
+    try { if (e?.currentTarget?.releasePointerCapture && e?.pointerId) e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    drag.current={id:null,dx:0,dy:0,last:null,axis:null};
+  };
+
+  // Fallback: attach native pointer listeners directly to the canvas element.
+  // This bypasses React synthetic events if for some reason they are not firing.
+  useEffect(()=>{
+    const el = canvasRef.current;
+    if(!el) return;
+    const pd = (ev)=> onPointerDown(ev);
+    const pm = (ev)=> onPointerMove(ev);
+    const pu = (ev)=> onPointerUp(ev);
+    el.addEventListener('pointerdown', pd, { passive: false });
+    el.addEventListener('pointermove', pm, { passive: false });
+    el.addEventListener('pointerup', pu);
+    el.addEventListener('pointercancel', pu);
+    return ()=>{
+      el.removeEventListener('pointerdown', pd);
+      el.removeEventListener('pointermove', pm);
+      el.removeEventListener('pointerup', pu);
+      el.removeEventListener('pointercancel', pu);
+    };
+  },[onPointerDown,onPointerMove,onPointerUp]);
+  // Ensure pointer release if pointerup happens outside canvas (global handler)
+  useEffect(()=>{
+    const clear = ()=>{ drag.current={id:null,dx:0,dy:0,last:null,axis:null}; };
+    window.addEventListener('pointerup', clear);
+    window.addEventListener('pointercancel', clear);
+    return ()=>{ window.removeEventListener('pointerup', clear); window.removeEventListener('pointercancel', clear); };
+  },[]);
 
   // Keyboard shortcuts
   useEffect(()=>{ const onKey=(e)=>{ if(!selected) return; const step=e.shiftKey?10:1; setLayers((old)=>old.map((L)=>{ if(L.id!==selected) return L; if(e.key==="ArrowLeft") return {...L,x:L.x-step}; if(e.key==="ArrowRight") return {...L,x:L.x+step}; if(e.key==="ArrowUp") return {...L,y:L.y-step}; if(e.key==="ArrowDown") return {...L,y:L.y+step}; if(e.key==="[") return {...L,feather:Math.max(0,L.feather-5)}; if(e.key==="]") return {...L,feather:Math.min(400,L.feather+5)}; if(e.key==="+"||e.key==="=") return {...L,scale:L.scale*1.02}; if(e.key==="-") return {...L,scale:L.scale/1.02}; if(e.key.toLowerCase()==="r") return {...L,x:cw/2,y:ch/2,scale:1,rot:0}; return L; })); }; window.addEventListener("keydown",onKey); return ()=>window.removeEventListener("keydown",onKey); },[selected,cw,ch]);
@@ -173,6 +312,107 @@ export default function App(){
   const manualExpand=()=>{ const plan=planAutoExpand(layers,cw,ch,expandMargin); if(plan.changed){ setCw(plan.cw); setCh(plan.ch); if(plan.dx||plan.dy){ setLayers(old=>old.map(L=>({...L,x:L.x+plan.dx,y:L.y+plan.dy}))); } } };
 
   const sel=layers.find(x=>x.id===selected)||null;
+
+  // When a layer is selected, ensure it's visible in the scrollable stage so sliders are usable
+  useEffect(()=>{
+    if(!sel || !stageRef.current || !canvasRef.current) return;
+    try{
+      const container = stageRef.current;
+      /* canvasRect not needed here */
+      // target layer center in canvas coordinates
+      const L = sel;
+      const cx = L.x * (viewScale || 1);
+      const cy = L.y * (viewScale || 1);
+      const offsetLeft = Math.max(0, Math.round(cx - container.clientWidth/2));
+      const offsetTop = Math.max(0, Math.round(cy - container.clientHeight/2));
+      container.scrollTo({ left: offsetLeft, top: offsetTop, behavior: 'smooth' });
+    }catch{ /* ignore */ }
+  },[selected, viewScale, sel]);
+
+  // Keep selected layer visible while the page scrolls (re-center stage & sidebar)
+  useEffect(()=>{
+    if(!sel) return;
+    const ensureVisible = ()=>{
+      try{
+        const container = stageRef.current;
+        if(container && canvasRef.current){
+          const L = sel;
+          const cx = L.x * (viewScale || 1);
+          const cy = L.y * (viewScale || 1);
+          const offsetLeft = Math.max(0, Math.round(cx - container.clientWidth/2));
+          const offsetTop = Math.max(0, Math.round(cy - container.clientHeight/2));
+          container.scrollTo({ left: offsetLeft, top: offsetTop, behavior: 'smooth' });
+        }
+        // sidebar selected item
+        if(layersListRef.current){
+          const node = layersListRef.current.querySelector(`[data-layer-id="${sel.id}"]`);
+          if(node) node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
+      }catch{ /* ignore */ }
+    };
+    const onScroll = ()=>ensureVisible();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    const id = setTimeout(ensureVisible, 50);
+    return ()=>{ window.removeEventListener('scroll', onScroll); clearTimeout(id); };
+  },[sel, viewScale]);
+
+  // Restore saved state from localStorage (images stored as data URLs)
+  useEffect(()=>{
+    try{
+      const raw = localStorage.getItem("seamless_layers_v1");
+      if(!raw) return;
+      const parsed = JSON.parse(raw);
+    if(parsed.cw) setCw(parsed.cw);
+    if(parsed.ch) setCh(parsed.ch);
+    if(parsed.viewScale) setViewScale(parsed.viewScale);
+    if(Array.isArray(parsed.layers)){
+      parsed.layers.forEach((L)=>{
+        const img = new Image();
+        img.onload = ()=>{
+          setLayers(old=>{
+            if(old.find(x=>x.id===L.id)) return old;
+            return [...old, {
+              id: L.id,
+              name: L.name,
+              img,
+              x: L.x,
+              y: L.y,
+              scale: L.scale,
+              rot: L.rot,
+              opacity: L.opacity,
+              feather: L.feather,
+              hueRot: L.hueRot,
+              bright: L.bright,
+              contrast: L.contrast,
+              saturate: L.saturate,
+              flipX: L.flipX
+            }];
+          });
+        };
+        img.onerror = ()=> console.warn("Failed to restore image", L.id);
+        img.src = L.src;
+      });
+    }
+    }catch(e){ console.warn("Restore failed", e); }
+  },[]);
+
+  // Persist layers & canvas state to localStorage
+  useEffect(()=>{
+    try{
+      const toSave = {
+        cw, ch, expandMargin, autoExpand, viewScale,
+        layers: layers.map(L=>({
+          id: L.id,
+          name: L.name,
+          src: L.img?.src || "",
+          x: L.x, y: L.y, scale: L.scale, rot: L.rot,
+          opacity: L.opacity, feather: L.feather, hueRot: L.hueRot,
+          bright: L.bright, contrast: L.contrast, saturate: L.saturate, flipX: L.flipX
+        }))
+      };
+      localStorage.setItem("seamless_layers_v1", JSON.stringify(toSave));
+    }catch(e){ if(!window.__SEAMLESS_PERSIST_FAILED){ window.__SEAMLESS_PERSIST_FAILED = true; console.warn("Persist failed", e); } }
+  },[layers,cw,ch,expandMargin,autoExpand]);
 
   /********************* Self‑Tests ************************/
   async function runSelfTests(){ const logs=[]; const ok=(n)=>logs.push(`✅ ${n}`); const bad=(n,e="")=>logs.push(`❌ ${n} ${e}`);
@@ -209,7 +449,7 @@ export default function App(){
       <div className="w-full min-h-screen bg-neutral-950 text-white">
         <div className="max-w-[1400px] mx-auto p-4 flex gap-4">
           {/* Sidebar */}
-          <div className="w-80 shrink-0 space-y-4">
+          <div className="w-80 shrink-0 space-y-4 sticky top-4 self-start">
             {/* Canvas Size & Auto Expand */}
             <div className="p-4 bg-neutral-900 rounded-2xl shadow space-y-3">
               <h2 className="text-xl font-bold">Canvas Size</h2>
@@ -233,12 +473,18 @@ export default function App(){
                 ))}
                 <button className="px-2 py-1 bg-emerald-700 rounded" onClick={manualExpand}>Expand Now</button>
               </div>
+              <div className="flex items-center gap-2 mt-2">
+                <button className="px-2 py-1 bg-neutral-800 rounded" onClick={()=>setViewScale(s=>clamp(+((s*1.1).toFixed(2)),0.2,3))}>Zoom In</button>
+                <button className="px-2 py-1 bg-neutral-800 rounded" onClick={()=>setViewScale(s=>clamp(+((s/1.1).toFixed(2)),0.2,3))}>Zoom Out</button>
+                <button className="px-2 py-1 bg-neutral-800 rounded" onClick={()=>setViewScale(1)}>Reset Zoom</button>
+                <div className="ml-3 text-sm text-neutral-300">Zoom: {Math.round(viewScale*100)}%</div>
+              </div>
             </div>
 
             <div className="p-4 bg-neutral-900 rounded-2xl shadow">
               <h2 className="text-xl font-bold mb-2">Layers</h2>
               <input type="file" accept="image/*" multiple onChange={(e)=>onFiles(e.target.files)} className="mb-3" />
-              <div className="space-y-2 max-h-[30vh] overflow-auto pr-1">
+              <div ref={layersListRef} className="space-y-2 max-h-[30vh] overflow-auto pr-1">
                 {layers.map((L,i)=> (
                   <div key={L.id} className={`p-2 rounded-2xl border ${selected===L.id?"border-emerald-400 bg-emerald-950/30":"border-neutral-700"}`}>
                     <div className="flex items-center justify-between gap-2">
@@ -321,18 +567,24 @@ export default function App(){
 
           {/* Main stage */}
           <div className="flex-1">
-            <div className="rounded-2xl overflow-hidden border border-neutral-800 shadow-2xl">
-              <canvas
-                ref={canvasRef}
-                width={cw}
-                height={ch}
-                className="w-full h-auto touch-none bg-neutral-900"
-                onPointerDown={onPointerDown}
-                onPointerMove={onPointerMove}
-                onPointerUp={onPointerUp}
-              />
+            <div ref={stageRef} className="rounded-2xl overflow-auto border border-neutral-800 shadow-2xl"
+                 onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
+              <div style={{ transform: `scale(${viewScale})`, transformOrigin: '0 0' }}>
+                <canvas
+                  ref={canvasRef}
+                  width={cw}
+                  height={ch}
+                  className="w-full h-auto touch-none pointer-events-auto bg-neutral-900"
+                  onPointerDown={onPointerDown}
+                  onPointerMove={onPointerMove}
+                  onPointerUp={onPointerUp}
+                />
+              </div>
             </div>
-            <div className="mt-3 text-neutral-400 text-sm">Auto‑Expand keeps everything in view: drag beyond edges and the canvas grows with a comfy margin.</div>
+
+            <div className="mt-3 text-neutral-400 text-sm">
+              Auto‑Expand keeps everything in view: drag beyond edges and the canvas grows with a comfy margin.
+            </div>
           </div>
         </div>
       </div>
