@@ -1,14 +1,18 @@
 {
   "name": "seamless-sticher",
   "version": "1.0.0",
-  "description": "---- test chagpt codex ----",
+  "description": "Seamless Stitcher - test harness",
   "main": "index.js",
-  "type": "commonjs",
   "scripts": {
     "start": "node tests/self-test.js",
     "dev": "node dev.js"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  }
 }
