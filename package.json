@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "---- test chagpt codex ----",
   "main": "index.js",
+<<<<<<< HEAD
   "type": "commonjs",
   "scripts": {
     "start": "node tests/self-test.js",
@@ -11,4 +12,18 @@
   "keywords": [],
   "author": "",
   "license": "ISC"
+=======
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node self-test.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  }
+>>>>>>> main
 }
