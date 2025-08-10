@@ -20,7 +20,9 @@ const server = http.createServer((req, res) => {
     res.end(data);
   });
 });
-const PORT = 3000;
+
+const PORT = process.env.PORT || 5173;
+
 server.listen(PORT, () => {
   console.log(`Seamless Stitcher dev server running at http://localhost:${PORT}`);
 });
